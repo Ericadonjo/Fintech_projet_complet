@@ -8,6 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../services/api';
+import { offlineService } from '../services/offline';
 import { Colors, Spacing, Radius } from '../theme';
 import { Account, Category } from '../types';
 
@@ -125,13 +126,22 @@ export default function NewTransactionScreen({ navigation, route }: any) {
 
     setSaving(true);
     try {
-      const tx = await api.transactions.create({ ...form, amount: amountNum, account_id: form.account_id, category_id: form.category_id });
+      const txData = { 
+        ...form, 
+        id: Math.random().toString(36).substr(2, 9), 
+        amount: amountNum, 
+        account_id: form.account_id, 
+        category_id: form.category_id 
+      };
       
-      if (attachmentUri && tx.id) {
+      const savedTx = await offlineService.saveTransaction(txData);
+      
+      if (attachmentUri && savedTx.id) {
         const mimeType = attachmentType === 'AUDIO' ? 'audio/m4a' : 'image/jpeg';
-        await api.transactions.uploadAttachment(tx.id, attachmentUri, mimeType, attachmentType);
+        await api.transactions.uploadAttachment(savedTx.id, attachmentUri, mimeType, attachmentType).catch(() => {});
       }
       
+      offlineService.syncWithServer().catch(() => {});
       navigation.goBack();
     } catch (err: any) { Alert.alert('Erreur', err?.message || 'Impossible d\'enregistrer.'); }
     finally { setSaving(false); }
@@ -143,9 +153,8 @@ export default function NewTransactionScreen({ navigation, route }: any) {
     </View>
   );
 
-  const amountNum = getAmountValue ? getAmountNum() : 0;
+  const amountNumVal = getAmountNum();
   const currentBal = form.account_id ? (balances[form.account_id] || 0) : 0;
-  const filteredCats = categories;
 
   return (
     <SafeAreaView style={s.container} edges={['top', 'bottom']}>
@@ -202,7 +211,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
                 <Text style={s.limitHint}>Limite de retrait : {fmtShort(withdrawalLimit)} XAF</Text>
               )}
               {form.type === 'debit' && form.account_id && (
-                <Text style={[s.limitHint, amountNum > currentBal && { color: Colors.red }]}>
+                <Text style={[s.limitHint, amountNumVal > currentBal && { color: Colors.red }]}>
                   Solde disponible : {fmtShort(currentBal)} XAF
                 </Text>
               )}
@@ -211,7 +220,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
             <View style={s.formField}>
               <Text style={s.label}>Catégorie</Text>
               <View style={s.catGrid}>
-                {filteredCats.map(cat => {
+                {categories.map(cat => {
                   const icon = CAT_CODE_TO_ICON[(cat as any).code] || cat.icon || '📌';
                   return (
                     <TouchableOpacity
@@ -266,7 +275,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
 
             <View style={s.formField}>
               <Text style={s.label}>Justificatif</Text>
-              <View style={s.justifRow}>
+              <div style={s.justifRow}>
                 <TouchableOpacity 
                   style={[s.justifBtn, attachmentType === 'IMAGE' && attachmentUri && s.justifBtnActive]} 
                   onPress={() => pickImage('IMAGE')}
@@ -288,7 +297,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
                   <Text style={s.justifIcon}>{isRecording ? '⏹️' : '🎤'}</Text>
                   <Text style={s.justifLabel}>{isRecording ? 'Arrêter' : 'Note vocale'}</Text>
                 </TouchableOpacity>
-              </View>
+              </div>
               {attachmentUri && (
                 <View style={s.previewRow}>
                   {attachmentType === 'AUDIO' ? (
@@ -368,7 +377,7 @@ const s = StyleSheet.create({
   audioPreview: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.g50, padding: 10, borderRadius: Radius.sm, gap: 10 },
   audioText: { flex: 1, fontSize: 12, color: Colors.g800 },
   imagePreview: { position: 'relative', width: 60, height: 60 },
-  thumbnail: { width: 60, height: 60, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.n200 },
+  thumbnail: { width: 60, height: 60, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.n100 },
   removeImage: { position: 'absolute', top: -5, right: -5, backgroundColor: Colors.red, borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center' },
   submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.g700, borderRadius: Radius.sm, paddingVertical: 13, marginTop: 4 },
   submitBtnText: { fontSize: 14, fontWeight: '600', color: Colors.white },

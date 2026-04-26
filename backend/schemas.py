@@ -38,6 +38,8 @@ class TransactionBase(BaseModel):
     reference: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
+    id: Optional[str] = None
+    hash: Optional[str] = None
     currency: Optional[str] = "XAF"
 
 class TransactionResponse(TransactionBase):

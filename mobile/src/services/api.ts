@@ -73,6 +73,10 @@ export const api = {
     bilan: (startDate?: string, endDate?: string) => request(`/reports/bilan?start=${startDate}&end=${endDate}`),
     cashflow: (startDate?: string, endDate?: string) => request(`/reports/cashflow?start=${startDate}&end=${endDate}`),
   },
+  sync: {
+    push: (transactions: any[]) => request('/sync/push', { method: 'POST', body: JSON.stringify(transactions) }),
+    pull: (lastSync?: string) => request(`/sync/pull${lastSync ? `?last_sync=${lastSync}` : ''}`),
+  },
   auth: {
     login: (email: string, password: string) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
     logout: () => request('/auth/logout', { method: 'POST' }),
