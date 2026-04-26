@@ -62,7 +62,14 @@ class Transaction(Base):
     statut = Column(String, default="CONFIRME", nullable=False)
     source_saisie = Column(String, default="MANUEL", nullable=False)
     correction_de = Column(String, ForeignKey("transactions.id"))
+    parent_id = Column(String, ForeignKey("transactions.id"))
     note = Column(String)
     hash = Column(String, nullable=False)
 
-
+class Rapprochement(Base):
+    __tablename__ = "rapprochements"
+    id = Column(String, primary_key=True, index=True)
+    transaction_id = Column(String, ForeignKey("transactions.id"), nullable=False)
+    reference_interne = Column(String, nullable=False)
+    montant = Column(Float, nullable=False)
+    date_creation = Column(String, nullable=False)

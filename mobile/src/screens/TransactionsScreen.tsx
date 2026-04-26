@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  RefreshControl, ActivityIndicator, FlatList, TextInput, Alert,
+  RefreshControl, ActivityIndicator, FlatList, TextInput, Alert, Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,36 +24,93 @@ export default function TransactionsScreen({ navigation }: any) {
   const [filter, setFilter] = useState<'all' | 'credit' | 'debit'>('all');
   const [search, setSearch] = useState('');
 
+  // Split State
+  const [splitModalVisible, setSplitModalVisible] = useState(false);
+  const [selectedTx, setSelectedTx] = useState<any>(null);
+  const [splitAmount, setSplitAmount] = useState('');
+  const [splitRef, setSplitRef] = useState('');
+
   const loadData = async (triggerSync = true) => {
     try {
-      // 1. Load categories and accounts (still from API for now, could be cached too)
       const [cats, accs] = await Promise.all([
         api.categories.list().catch(() => []), 
         api.accounts.list().catch(() => [])
       ]);
       setCategories(cats); setAccounts(accs);
-
-      // 2. Load transactions from Offline Service
       const localTxs = await offlineService.getTransactions();
       setTransactions(localTxs);
-
-      // 3. Trigger sync in background if requested
       if (triggerSync) {
         offlineService.syncWithServer().then(success => {
-          if (success) {
-            offlineService.getTransactions().then(txs => setTransactions(txs));
-          }
+          if (success) offlineService.getTransactions().then(txs => setTransactions(txs));
         });
       }
-    } catch (err) {
-      console.warn('Error loading data:', err);
-    } finally {
-      setLoading(false); 
-      setRefreshing(false);
-    }
+    } catch { }
+    finally { setLoading(false); setRefreshing(false); }
   };
 
   useFocusEffect(useCallback(() => { loadData(true); }, []));
+
+  const handleAction = (tx: any) => {
+    Alert.alert(
+      "Actions transaction",
+      `Transaction de ${fmtShort(tx.amount)} XAF`,
+      [
+        { text: "Annuler (Correction)", style: "destructive", onPress: () => handleCancel(tx.id) },
+        { text: "Fragmenter (Split)", onPress: () => { setSelectedTx(tx); setSplitModalVisible(true); } },
+        { text: "Retour", style: "cancel" },
+      ]
+    );
+  };
+
+  const handleCancel = async (id: string) => {
+    Alert.alert("Confirmer", "Annuler cette transaction et créer une correction ?", [
+      { text: "Non", style: "cancel" },
+      { text: "Oui", style: "destructive", onPress: async () => {
+        try { await api.transactions.cancel(id); loadData(true); } 
+        catch { Alert.alert("Erreur", "Action impossible"); }
+      }}
+    ]);
+  };
+
+  const handleSplit = async () => {
+    const amt = parseFloat(splitAmount.replace(/\s/g, ''));
+    if (isNaN(amt) || amt <= 0 || amt >= selectedTx.amount) {
+      Alert.alert("Erreur", "Le montant du fragment doit être inférieur au montant total.");
+      return;
+    }
+
+    try {
+      // Logic: Cancel original and create two new ones
+      // 1. Cancel original
+      await api.transactions.cancel(selectedTx.id);
+      
+      // 2. Create Fragment 1
+      await api.transactions.create({
+        ...selectedTx,
+        id: Math.random().toString(36).substr(2, 9),
+        amount: amt,
+        reference: splitRef || `${selectedTx.reference || ''} (F1)`,
+        note: `Fragment de ${selectedTx.id}`
+      });
+
+      // 3. Create Fragment 2 (the rest)
+      await api.transactions.create({
+        ...selectedTx,
+        id: Math.random().toString(36).substr(2, 9),
+        amount: selectedTx.amount - amt,
+        reference: `${selectedTx.reference || ''} (F2)`,
+        note: `Reste de ${selectedTx.id}`
+      });
+
+      setSplitModalVisible(false);
+      setSplitAmount('');
+      setSplitRef('');
+      loadData(true);
+      Alert.alert("Succès", "La transaction a été fragmentée.");
+    } catch {
+      Alert.alert("Erreur", "Échec de la fragmentation.");
+    }
+  };
 
   const filtered = transactions
     .filter(t => filter === 'all' || t.type === filter)
@@ -67,62 +124,25 @@ export default function TransactionsScreen({ navigation }: any) {
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  const handleCancel = async (id: string) => {
-    Alert.alert(
-      "Annuler la transaction",
-      "Cette opération est irréversible. Une transaction d'annulation sera créée.",
-      [
-        { text: "Retour", style: "cancel" },
-        { 
-          text: "Confirmer l'annulation", 
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await api.transactions.cancel(id);
-              loadData(true);
-            } catch (err) {
-              Alert.alert("Erreur", "Impossible d'annuler cette transaction.");
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  if (loading) return (
-    <View style={[s.container, { justifyContent: 'center', alignItems: 'center' }]}>
-      <ActivityIndicator color={Colors.g700} />
-    </View>
-  );
+  if (loading) return <View style={s.loader}><ActivityIndicator color={Colors.g700} /></View>;
 
   return (
     <SafeAreaView style={s.container} edges={['top']}>
+      {/* Header & Filter UI (same as before) */}
       <View style={s.header}>
         <View>
           <Text style={s.pageTitle}>Transactions</Text>
           <Text style={s.pageSub}>{filtered.length} transaction{filtered.length !== 1 ? 's' : ''}</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <TouchableOpacity style={[s.btnCircle]} onPress={() => { setRefreshing(true); loadData(true); }}>
-            <Ionicons name="sync" size={20} color={Colors.g700} />
-          </TouchableOpacity>
-          <TouchableOpacity style={s.btnPrimary} onPress={() => navigation.navigate('NewTransaction', {})}>
-            <Ionicons name="add" size={16} color={Colors.white} />
-            <Text style={s.btnPrimaryText}>Nouvelle</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={s.btnPrimary} onPress={() => navigation.navigate('NewTransaction', {})}>
+          <Ionicons name="add" size={16} color={Colors.white} />
+          <Text style={s.btnPrimaryText}>Nouvelle</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={s.searchBox}>
         <Ionicons name="search-outline" size={16} color={Colors.n500} style={{ marginRight: 8 }} />
-        <TextInput
-          style={s.searchInput}
-          placeholder="Rechercher..."
-          placeholderTextColor={Colors.n300}
-          value={search}
-          onChangeText={setSearch}
-        />
-        {search ? <TouchableOpacity onPress={() => setSearch('')}><Ionicons name="close" size={16} color={Colors.n500} /></TouchableOpacity> : null}
+        <TextInput style={s.searchInput} placeholder="Rechercher..." placeholderTextColor={Colors.n300} value={search} onChangeText={setSearch} />
       </View>
 
       <View style={s.filterRow}>
@@ -137,40 +157,25 @@ export default function TransactionsScreen({ navigation }: any) {
         data={filtered}
         keyExtractor={item => String(item.id)}
         contentContainerStyle={{ padding: Spacing.md, paddingBottom: 100 }}
-        showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(true); }} tintColor={Colors.g700} />}
-        ListEmptyComponent={
-          <View style={{ padding: 40, alignItems: 'center' }}>
-            <Ionicons name="document-text-outline" size={48} color={Colors.n300} />
-            <Text style={{ marginTop: 10, color: Colors.n500 }}>Aucune transaction trouvée</Text>
-          </View>
-        }
         renderItem={({ item }) => {
           const cat = categories.find(c => c.id === item.category_id);
           const acc = accounts.find(a => a.id === item.account_id);
           const isCredit = item.type === 'credit';
-          
           return (
-            <TouchableOpacity 
-              style={s.row} 
-              onLongPress={() => handleCancel(item.id)}
-              activeOpacity={0.7}
-            >
+            <TouchableOpacity style={s.row} onPress={() => handleAction(item)}>
               <View style={[s.rowIcon, { backgroundColor: isCredit ? Colors.g50 : Colors.redBg }]}>
                 <Text style={{fontSize: 16}}>{isCredit ? '↑' : '↓'}</Text>
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                   <Text style={s.rowTitle}>{cat?.name || 'Catégorie'}</Text>
-                  <Text style={[s.rowAmount, { color: isCredit ? Colors.g700 : Colors.red }]}>
-                    {isCredit ? '+' : '-'}{fmtShort(item.amount)}
-                  </Text>
+                  <Text style={[s.rowAmount, { color: isCredit ? Colors.g700 : Colors.red }]}>{isCredit ? '+' : '-'}{fmtShort(item.amount)}</Text>
                 </View>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                   <Text style={s.rowSub}>{acc?.name || 'Compte'} • {fmtDate(item.date)}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     {!item.synced && <Ionicons name="cloud-offline-outline" size={12} color={Colors.a500} style={{ marginRight: 4 }} />}
-                    {item.synced && <Ionicons name="checkmark-circle-outline" size={12} color={Colors.g400} style={{ marginRight: 4 }} />}
                     <Text style={s.rowRef}>{item.reference ? `#${item.reference}` : ''}</Text>
                   </View>
                 </View>
@@ -179,16 +184,45 @@ export default function TransactionsScreen({ navigation }: any) {
           );
         }}
       />
+
+      {/* Split Modal */}
+      <Modal visible={splitModalVisible} transparent animationType="slide">
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <Text style={s.modalTitle}>Fragmenter la transaction</Text>
+            <Text style={s.modalSub}>Montant total : {selectedTx ? fmtShort(selectedTx.amount) : 0} XAF</Text>
+            
+            <View style={s.modalField}>
+              <Text style={s.modalLabel}>Montant du 1er fragment</Text>
+              <TextInput style={s.modalInput} keyboardType="numeric" value={splitAmount} onChangeText={setSplitAmount} placeholder="Ex: 5000" />
+            </View>
+
+            <View style={s.modalField}>
+              <Text style={s.modalLabel}>Référence interne (Facture n°)</Text>
+              <TextInput style={s.modalInput} value={splitRef} onChangeText={setSplitRef} placeholder="Ex: FACT-2024-001" />
+            </View>
+
+            <View style={s.modalActions}>
+              <TouchableOpacity style={s.modalBtnCancel} onPress={() => setSplitModalVisible(false)}>
+                <Text>Annuler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={s.modalBtnConfirm} onPress={handleSplit}>
+                <Text style={{ color: Colors.white, fontWeight: '600' }}>Confirmer le Split</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
+  loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: Spacing.md, backgroundColor: Colors.white, borderBottomWidth: 1, borderBottomColor: Colors.n100 },
   pageTitle: { fontSize: 22, fontWeight: '700', color: Colors.g800 },
   pageSub: { fontSize: 12, color: Colors.n500, marginTop: 2 },
-  btnCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.n50, justifyContent: 'center', alignItems: 'center' },
   btnPrimary: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.g700, paddingVertical: 8, paddingHorizontal: 12, borderRadius: Radius.sm },
   btnPrimaryText: { color: Colors.white, fontSize: 13, fontWeight: '600', marginLeft: 4 },
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.white, margin: Spacing.md, paddingHorizontal: 12, borderRadius: Radius.sm, height: 40, borderWidth: 1, borderColor: Colors.n100 },
@@ -206,6 +240,14 @@ const s = StyleSheet.create({
   rowAmount: { fontSize: 15, fontWeight: '700' },
   rowSub: { fontSize: 12, color: Colors.n500 },
   rowRef: { fontSize: 11, color: Colors.n300 },
-  tableHeader: { flexDirection: 'row', paddingHorizontal: Spacing.md, marginBottom: 8 },
-  th: { fontSize: 11, fontWeight: '600', color: Colors.n500, textTransform: 'uppercase' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
+  modalContent: { backgroundColor: Colors.white, borderRadius: Radius.lg, padding: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: Colors.g800, marginBottom: 4 },
+  modalSub: { fontSize: 13, color: Colors.n500, marginBottom: 20 },
+  modalField: { marginBottom: 15 },
+  modalLabel: { fontSize: 13, fontWeight: '500', color: Colors.n700, marginBottom: 6 },
+  modalInput: { backgroundColor: Colors.n50, borderWidth: 1, borderColor: Colors.n100, borderRadius: Radius.sm, padding: 10 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  modalBtnCancel: { padding: 12 },
+  modalBtnConfirm: { backgroundColor: Colors.g700, paddingVertical: 10, paddingHorizontal: 20, borderRadius: Radius.sm },
 });
