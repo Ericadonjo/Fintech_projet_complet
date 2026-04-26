@@ -46,11 +46,11 @@ export const api = {
     update: (id: number | string, data: any) => request(`/transactions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: number | string) => request(`/transactions/${id}`, { method: 'DELETE' }),
     cancel: (id: string | number) => request(`/transactions/${id}/cancel`, { method: 'POST' }),
-    uploadAttachment: async (txId: string, uri: string, type: string = 'image/jpeg') => {
+    uploadAttachment: async (txId: string, uri: string, mimeType: string = 'image/jpeg', type: string = 'IMAGE') => {
       const formData = new FormData();
-      const filename = uri.split('/').pop() || 'receipt.jpg';
-      formData.append('file', { uri, name: filename, type } as any);
-      const res = await fetch(`${API_BASE}/transactions/${txId}/attachments`, {
+      const filename = uri.split('/').pop() || 'file';
+      formData.append('file', { uri, name: filename, type: mimeType } as any);
+      const res = await fetch(`${API_BASE}/transactions/${txId}/attachments?type=${type}`, {
         method: 'POST',
         body: formData,
       });

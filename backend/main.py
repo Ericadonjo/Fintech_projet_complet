@@ -257,7 +257,7 @@ def cancel_transaction(tx_id: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/transactions/{tx_id}/attachments")
-def upload_attachment(tx_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_attachment(tx_id: str, type: str = "IMAGE", file: UploadFile = File(...), db: Session = Depends(get_db)):
     tx = db.query(models.Transaction).filter(models.Transaction.id == tx_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction introuvable")
@@ -270,7 +270,14 @@ def upload_attachment(tx_id: str, file: UploadFile = File(...), db: Session = De
         shutil.copyfileobj(file.file, buffer)
 
     pj_id = str(uuid.uuid4())
-    type_fichier = "IMAGE" if ext.lower() in ["jpg", "jpeg", "png", "webp"] else "PDF"
+    
+    # Validation of the type against schema constraint if possible
+    # Allowed: 'IMAGE', 'PDF', 'SMS_SCREENSHOT', 'AUDIO'
+    type_fichier = type.upper()
+    if ext.lower() in ["m4a", "webm", "mp3", "wav"]:
+        type_fichier = "AUDIO"
+    elif type_fichier not in ["IMAGE", "PDF", "SMS_SCREENSHOT", "AUDIO"]:
+        type_fichier = "IMAGE" if ext.lower() in ["jpg", "jpeg", "png", "webp"] else "PDF"
 
     db_pj = models.PieceJointe(
         id=pj_id,

@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../services/api';
 import { Colors, Spacing, Radius } from '../theme';
@@ -27,7 +28,11 @@ export default function NewTransactionScreen({ navigation, route }: any) {
   const [withdrawalLimit, setWithdrawalLimit] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  
   const [attachmentUri, setAttachmentUri] = useState<string | null>(null);
+  const [attachmentType, setAttachmentType] = useState<'IMAGE' | 'AUDIO' | 'SMS_SCREENSHOT'>('IMAGE');
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
 
   const [form, setForm] = useState({
     type: defaultType as 'credit' | 'debit',
@@ -59,7 +64,31 @@ export default function NewTransactionScreen({ navigation, route }: any) {
     finally { setLoading(false); }
   }
 
-  async function pickImage() {
+  async function startRecording() {
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      if (permission.status !== 'granted') {
+        Alert.alert('Permission refusée', 'L\'accès au micro est nécessaire pour enregistrer une note vocale.');
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecording(recording);
+      setIsRecording(true);
+    } catch (err) { Alert.alert('Erreur', 'Impossible de démarrer l\'enregistrement'); }
+  }
+
+  async function stopRecording() {
+    if (!recording) return;
+    setIsRecording(false);
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    setAttachmentUri(uri);
+    setAttachmentType('AUDIO');
+    setRecording(null);
+  }
+
+  async function pickImage(type: 'IMAGE' | 'SMS_SCREENSHOT') {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -67,6 +96,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
       });
       if (!result.canceled && result.assets.length > 0) {
         setAttachmentUri(result.assets[0].uri);
+        setAttachmentType(type);
       }
     } catch (err) {
       Alert.alert('Erreur', 'Impossible de sélectionner la photo');
@@ -84,6 +114,7 @@ export default function NewTransactionScreen({ navigation, route }: any) {
     if (!form.account_id || !amountNum || !form.category_id) {
       Alert.alert('Erreur', 'Veuillez remplir tous les champs obligatoires.'); return;
     }
+    
     if (form.type === 'debit') {
       const bal = balances[form.account_id] || 0;
       if (amountNum > bal) { Alert.alert('Solde insuffisant', `Solde actuel : ${fmtShort(bal)} XAF`); return; }
@@ -91,13 +122,14 @@ export default function NewTransactionScreen({ navigation, route }: any) {
         Alert.alert('Limite dépassée', `Limite de retrait : ${fmtShort(withdrawalLimit)} XAF`); return;
       }
     }
+
     setSaving(true);
     try {
       const tx = await api.transactions.create({ ...form, amount: amountNum, account_id: form.account_id, category_id: form.category_id });
       
-      // Upload attachment if present
       if (attachmentUri && tx.id) {
-        await api.transactions.uploadAttachment(tx.id, attachmentUri);
+        const mimeType = attachmentType === 'AUDIO' ? 'audio/m4a' : 'image/jpeg';
+        await api.transactions.uploadAttachment(tx.id, attachmentUri, mimeType, attachmentType);
       }
       
       navigation.goBack();
@@ -111,15 +143,14 @@ export default function NewTransactionScreen({ navigation, route }: any) {
     </View>
   );
 
-  const amountNum = getAmountNum();
+  const amountNum = getAmountValue ? getAmountNum() : 0;
   const currentBal = form.account_id ? (balances[form.account_id] || 0) : 0;
-  const filteredCats = categories; // show all, server filters
+  const filteredCats = categories;
 
   return (
     <SafeAreaView style={s.container} edges={['top', 'bottom']}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          {/* Header */}
           <View style={s.header}>
             <TouchableOpacity style={s.backBtn} onPress={() => navigation.goBack()}>
               <Ionicons name="arrow-back" size={20} color={Colors.n700} />
@@ -131,7 +162,6 @@ export default function NewTransactionScreen({ navigation, route }: any) {
           </View>
 
           <View style={s.body}>
-            {/* Flux Toggle — mirrors .flux-toggle */}
             <View style={s.fluxToggle}>
               <TouchableOpacity
                 style={[s.fluxBtn, form.type === 'credit' && s.fluxBtnIn]}
@@ -149,7 +179,6 @@ export default function NewTransactionScreen({ navigation, route }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* Amount field */}
             <View style={s.formField}>
               <Text style={s.label}>Montant</Text>
               <View style={s.amountRow}>
@@ -179,7 +208,6 @@ export default function NewTransactionScreen({ navigation, route }: any) {
               )}
             </View>
 
-            {/* Category */}
             <View style={s.formField}>
               <Text style={s.label}>Catégorie</Text>
               <View style={s.catGrid}>
@@ -199,7 +227,6 @@ export default function NewTransactionScreen({ navigation, route }: any) {
               </View>
             </View>
 
-            {/* Account */}
             <View style={s.formField}>
               <Text style={s.label}>Compte</Text>
               <View style={s.comptesRow}>
@@ -222,39 +249,66 @@ export default function NewTransactionScreen({ navigation, route }: any) {
               </View>
             </View>
 
-            {/* Description */}
             <View style={s.formField}>
               <Text style={s.label}>Description (optionnel)</Text>
               <TextInput style={s.fieldInput} value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder="Client, reference..." placeholderTextColor={Colors.n300} />
             </View>
 
-            {/* Reference */}
             <View style={s.formField}>
               <Text style={s.label}>Référence externe (optionnel)</Text>
               <TextInput style={s.fieldInput} value={form.reference} onChangeText={v => setForm(f => ({ ...f, reference: v }))} placeholder="N° facture, transaction MoMo..." placeholderTextColor={Colors.n300} />
             </View>
 
-            {/* Date */}
             <View style={s.formField}>
               <Text style={s.label}>Date</Text>
               <TextInput style={s.fieldInput} value={form.date} onChangeText={v => setForm(f => ({ ...f, date: v }))} placeholder="AAAA-MM-JJ" placeholderTextColor={Colors.n300} />
             </View>
 
-            {/* Justificatif */}
             <View style={s.formField}>
-              <Text style={s.label}>Justificatif (Reçu, photo...)</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <TouchableOpacity style={[s.justifBtn, { flex: 1 }]} onPress={pickImage}>
+              <Text style={s.label}>Justificatif</Text>
+              <View style={s.justifRow}>
+                <TouchableOpacity 
+                  style={[s.justifBtn, attachmentType === 'IMAGE' && attachmentUri && s.justifBtnActive]} 
+                  onPress={() => pickImage('IMAGE')}
+                >
                   <Text style={s.justifIcon}>📷</Text>
-                  <Text style={s.justifLabel}>{attachmentUri ? 'Changer la photo' : 'Ajouter une photo'}</Text>
+                  <Text style={s.justifLabel}>Photo reçu</Text>
                 </TouchableOpacity>
-                {attachmentUri && (
-                  <Image source={{ uri: attachmentUri }} style={{ width: 60, height: 60, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.n200 }} />
-                )}
+                <TouchableOpacity 
+                  style={[s.justifBtn, attachmentType === 'SMS_SCREENSHOT' && attachmentUri && s.justifBtnActive]} 
+                  onPress={() => pickImage('SMS_SCREENSHOT')}
+                >
+                  <Text style={s.justifIcon}>📱</Text>
+                  <Text style={s.justifLabel}>Capture SMS</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[s.justifBtn, attachmentType === 'AUDIO' && attachmentUri && s.justifBtnActive, isRecording && { backgroundColor: Colors.redBg }]} 
+                  onPress={isRecording ? stopRecording : startRecording}
+                >
+                  <Text style={s.justifIcon}>{isRecording ? '⏹️' : '🎤'}</Text>
+                  <Text style={s.justifLabel}>{isRecording ? 'Arrêter' : 'Note vocale'}</Text>
+                </TouchableOpacity>
               </View>
+              {attachmentUri && (
+                <View style={s.previewRow}>
+                  {attachmentType === 'AUDIO' ? (
+                    <View style={s.audioPreview}>
+                      <Ionicons name="musical-notes" size={20} color={Colors.g700} />
+                      <Text style={s.audioText}>Note vocale enregistrée</Text>
+                      <TouchableOpacity onPress={() => setAttachmentUri(null)}><Ionicons name="close-circle" size={20} color={Colors.red} /></TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={s.imagePreview}>
+                      <Image source={{ uri: attachmentUri }} style={s.thumbnail} />
+                      <TouchableOpacity style={s.removeImage} onPress={() => setAttachmentUri(null)}>
+                        <Ionicons name="close-circle" size={20} color={Colors.red} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
 
-            {/* Submit */}
             <TouchableOpacity style={[s.submitBtn, saving && { opacity: 0.6 }]} onPress={handleSubmit} disabled={saving}>
               {saving
                 ? <ActivityIndicator color={Colors.white} />
@@ -307,8 +361,15 @@ const s = StyleSheet.create({
   compteChipBal: { fontSize: 12, color: Colors.n300 },
   justifRow: { flexDirection: 'row', gap: 6 },
   justifBtn: { flex: 1, backgroundColor: Colors.n50, borderWidth: 1, borderColor: Colors.n100, borderRadius: Radius.sm, padding: 12, alignItems: 'center' },
+  justifBtnActive: { backgroundColor: Colors.g50, borderColor: Colors.g400 },
   justifIcon: { fontSize: 18, marginBottom: 3 },
   justifLabel: { fontSize: 9, color: Colors.n500, textAlign: 'center' },
+  previewRow: { marginTop: 10 },
+  audioPreview: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.g50, padding: 10, borderRadius: Radius.sm, gap: 10 },
+  audioText: { flex: 1, fontSize: 12, color: Colors.g800 },
+  imagePreview: { position: 'relative', width: 60, height: 60 },
+  thumbnail: { width: 60, height: 60, borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.n200 },
+  removeImage: { position: 'absolute', top: -5, right: -5, backgroundColor: Colors.red, borderRadius: 10, width: 20, height: 20, justifyContent: 'center', alignItems: 'center' },
   submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.g700, borderRadius: Radius.sm, paddingVertical: 13, marginTop: 4 },
   submitBtnText: { fontSize: 14, fontWeight: '600', color: Colors.white },
 });
