@@ -71,7 +71,7 @@ export const api = {
   },
   reports: {
     bilan: (startDate?: string, endDate?: string) => request(`/reports/bilan?start=${startDate}&end=${endDate}`),
-    cashflow: (startDate?: string, endDate?: string) => request(`/reports/cashflow?start=${startDate}&end=${endDate}`),
+    cashflow: () => request('/reports/cashflow'),
   },
   sync: {
     push: (transactions: any[]) => request('/sync/push', { method: 'POST', body: JSON.stringify(transactions) }),

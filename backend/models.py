@@ -73,3 +73,17 @@ class Rapprochement(Base):
     reference_interne = Column(String, nullable=False)
     montant = Column(Float, nullable=False)
     date_creation = Column(String, nullable=False)
+class SharedReport(Base):
+    __tablename__ = "shared_reports"
+    token = Column(String, primary_key=True, index=True)
+    report_type = Column(String, nullable=False) # e.g., 'cashflow'
+    created_at = Column(String, nullable=False)
+    expires_at = Column(String)
+    is_active = Column(Integer, default=1)
+    
+    # Credit Decision fields
+    decision_status = Column(String) # 'PENDING', 'APPROVED', 'REJECTED'
+    decision_amount = Column(Float)
+    decision_reason = Column(String)
+    decision_date = Column(String)
+

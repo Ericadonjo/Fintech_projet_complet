@@ -47,3 +47,14 @@ class TransactionResponse(TransactionBase):
     hash: Optional[str] = None
     class Config:
         from_attributes = True
+class SharedReportCreate(BaseModel):
+    report_type: str
+    expires_in_days: Optional[int] = 7
+
+class SharedReportResponse(BaseModel):
+    token: str
+    report_type: str
+    expires_at: Optional[str]
+    share_url: str
+
+
